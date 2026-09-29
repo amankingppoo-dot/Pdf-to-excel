@@ -1,445 +1,314 @@
 import streamlit as st
 import pandas as pd
 import pdfplumber
-import re
 import io
+import re
 
-
-# =========================
-# PAGE SETTINGS
-# =========================
-
-st.set_page_config(
-    page_title="PDF to Excel AI",
-    page_icon="📄",
-    layout="wide"
-)
+st.set_page_config(page_title="PDF to Excel AI", page_icon="📄")
 
 st.title("📄 PDF → Excel AI")
-st.write(
-    "PDF upload karo, Hindi/English command do, "
-    "aur clean Excel file pao."
-)
+st.write("PDF upload karo, command do aur clean Excel pao.")
 
 
-# =========================
-# MAKE UNIQUE COLUMN NAMES
-# =========================
-
-def make_unique_columns(columns):
-    """
-    Duplicate column names ko automatically unique banata hai.
-    Example:
-    Name, Name, Name
-    →
-    Name, Name_1, Name_2
-    """
-
-    seen = {}
-    unique_columns = []
+def unique_columns(columns):
+    result = []
+    used = {}
 
     for col in columns:
-
         col = str(col).strip()
 
         if not col:
             col = "Column"
 
-        if col not in seen:
-            seen[col] = 0
-            unique_columns.append(col)
-
+        if col in used:
+            used[col] += 1
+            result.append(f"{col}_{used[col]}")
         else:
-            seen[col] += 1
-            unique_columns.append(
-                f"{col}_{seen[col]}"
-            )
+            used[col] = 0
+            result.append(col)
 
-    return unique_columns
+    return result
 
 
-# =========================
-# PDF DATA EXTRACTION
-# =========================
+def extract_pdf(pdf_file):
+    tables = []
 
-def extract_pdf_data(pdf_file):
+    with pdfplumber.open(pdf_file) as pdf:
+        for page in pdf.pages:
+            try:
+                page_tables = page.extract_tables()
+            except Exception:
+                page_tables = []
 
-    all_tables = []
+            for table in page_tables:
+                if table and len(table) > 1:
+                    tables.append(table)
 
-    try:
-
-        with pdfplumber.open(pdf_file) as pdf:
-
-            for page in pdf.pages:
-
-                try:
-                    tables = page.extract_tables()
-                except Exception:
-                    tables = []
-
-                for table in tables:
-
-                    if table and len(table) >= 2:
-                        all_tables.append(table)
-
-    except Exception as e:
-
-        raise ValueError(
-            f"PDF read nahi ho paya: {e}"
-        )
-
-
-    if not all_tables:
+    if not tables:
         return None
 
-
-    # First table use karo
-    table = all_tables[0]
+    table = tables[0]
 
     header = table[0]
     rows = table[1:]
 
+    header = [
+        str(x).strip() if x is not None else ""
+        for x in header
+    ]
 
-    # =========================
-    # CLEAN HEADER
-    # =========================
+    header = [
+        x if x else f"Column_{i+1}"
+        for i, x in enumerate(header)
+    ]
 
-    clean_header = []
-
-    for i, value in enumerate(header):
-
-        if value is None:
-            value = ""
-
-        value = str(value).strip()
-
-        if not value:
-            value = f"Column_{i + 1}"
-
-        clean_header.append(value)
-
-
-    # IMPORTANT:
-    # Duplicate column names fix
-    clean_header = make_unique_columns(
-        clean_header
-    )
-
-
-    # =========================
-    # CLEAN ROWS
-    # =========================
+    header = unique_columns(header)
 
     clean_rows = []
 
     for row in rows:
-
-        if row is None:
-            continue
-
         row = list(row)
 
-        # Short row
-        if len(row) < len(clean_header):
+        if len(row) < len(header):
+            row += [""] * (len(header) - len(row))
 
-            row = row + (
-                [""] *
-                (len(clean_header) - len(row))
-            )
+        if len(row) > len(header):
+            row = row[:len(header)]
 
-        # Long row
-        elif len(row) > len(clean_header):
+        row = [
+            str(x).strip() if x is not None else ""
+            for x in row
+        ]
 
-            row = row[:len(clean_header)]
-
-
-        new_row = []
-
-        for value in row:
-
-            if value is None:
-                value = ""
-
-            value = str(value).strip()
-
-            new_row.append(value)
-
-
-        # Empty row check
-        if any(
-            str(x).strip()
-            for x in new_row
-        ):
-            clean_rows.append(new_row)
-
+        if any(x != "" for x in row):
+            clean_rows.append(row)
 
     if not clean_rows:
         return None
 
-
-    df = pd.DataFrame(
+    return pd.DataFrame(
         clean_rows,
-        columns=clean_header
+        columns=header
     )
 
 
-    # Final safety check
-    df.columns = make_unique_columns(
-        df.columns
-    )
+def clean_spaces(df):
+    df = df.copy()
+
+    for col in df.columns:
+        df[col] = df[col].apply(
+            lambda x: re.sub(
+                r"\s+",
+                " ",
+                str(x)
+            ).strip()
+        )
 
     return df
 
 
-# =========================
-# TEXT CLEAN FUNCTION
-# =========================
-
-def clean_text_columns(df):
-
-    result = df.copy()
-
-    for col in result.columns:
-
-        if (
-            pd.api.types.is_object_dtype(
-                result[col]
-            )
-        ):
-
-            result[col] = (
-                result[col]
-                .astype(str)
-                .str.replace(
-                    r"\s+",
-                    " ",
-                    regex=True
-                )
-                .str.strip()
-            )
-
-    return result
-
-
-# =========================
-# REMOVE BLANK ROWS
-# =========================
-
-def remove_blank_rows(df):
-
-    result = df.copy()
-
-    result = result.replace(
-        r"^\s*$",
-        pd.NA,
-        regex=True
-    )
-
-    result = result.dropna(
-        how="all"
-    )
-
-    return result.reset_index(
-        drop=True
-    )
-
-
-# =========================
-# REMOVE DUPLICATES
-# =========================
-
-def remove_duplicates(df):
-
-    result = df.copy()
-
-    result = result.drop_duplicates()
-
-    return result.reset_index(
-        drop=True
-    )
-
-
-# =========================
-# CLEAN MISSING VALUES
-# =========================
-
-def clean_missing_values(df):
-
-    result = df.copy()
-
-    missing_values = [
-        "",
-        " ",
-        "nan",
-        "NaN",
-        "NAN",
-        "None",
-        "none",
-        "NULL",
-        "null",
-        "NA",
-        "N/A",
-        "n/a",
-        "-"
-    ]
-
-    result = result.replace(
-        missing_values,
-        pd.NA
-    )
-
-    return result
-
-
-# =========================
-# CLEAN COLUMN NAMES
-# =========================
-
-def clean_column_names(df):
-
-    result = df.copy()
-
-    new_columns = []
-
-    for i, col in enumerate(
-        result.columns
-    ):
-
-        col = str(col).strip()
-
-        # Space → underscore
-        col = re.sub(
-            r"\s+",
-            "_",
-            col
-        )
-
-        # Special characters remove
-        col = re.sub(
-            r"[^a-zA-Z0-9_\u0900-\u097F]+",
-            "",
-            col
-        )
-
-        if not col:
-            col = f"Column_{i + 1}"
-
-        new_columns.append(
-            col.lower()
-        )
-
-    # Duplicate names fix
-    result.columns = make_unique_columns(
-        new_columns
-    )
-
-    return result
-
-
-# =========================
-# CLEAN NUMBERS
-# =========================
-
-def clean_numbers(df):
-
-    result = df.copy()
-
-    for col in result.columns:
-
-        original = result[col]
-
-        converted = pd.to_numeric(
-            original
-            .astype(str)
-            .str.replace(
-                ",",
-                "",
-                regex=False
-            )
-            .str.replace(
-                "₹",
-                "",
-                regex=False
-            )
-            .str.strip(),
-            errors="coerce"
-        )
-
-        # Sirf tab convert karo jab
-        # reasonable amount numeric ho
-        if converted.notna().sum() > 0:
-
-            result[col] = converted.where(
-                converted.notna(),
-                original
-            )
-
-    return result
-
-
-# =========================
-# SORT COLUMN FINDER
-# =========================
-
-def find_sort_column(df, command):
-
-    command = command.lower()
-
-    # Command me column name search
-    for col in df.columns:
-
-        if str(col).lower() in command:
-            return col
-
-
-    # Common name columns
-    name_words = [
-        "name",
-        "naam",
-        "नाम",
-        "customer",
-        "student",
-        "employee",
-        "person"
-    ]
-
-    for col in df.columns:
-
-        col_text = str(col).lower()
-
-        if any(
-            word in col_text
-            for word in name_words
-        ):
-            return col
-
-
-    # First column fallback
-    if len(df.columns) > 0:
-        return df.columns[0]
-
-
-    return None
-
-
-# =========================
-# MAIN COMMAND ENGINE
-# =========================
-
 def process_command(df, command):
-
     result = df.copy()
+    cmd = command.lower().strip()
 
-    command = str(
-        command
-    ).lower().strip()
+    # Duplicate rows
+    if any(x in cmd for x in [
+        "duplicate",
+        "duplicates",
+        "डुप्लीकेट",
+        "डुप्लिकेट",
+        "दोहराव"
+    ]):
+        result = result.drop_duplicates()
 
-
-    # =========================
-    # 1. BLANK / EMPTY ROWS
-    # =========================
-
-    blank_words = [
+    # Blank rows
+    if any(x in cmd for x in [
         "blank",
         "empty",
-        "blank
+        "खाली",
+        "blank row",
+        "empty row"
+    ]):
+        result = result.replace(
+            r"^\s*$",
+            pd.NA,
+            regex=True
+        )
+        result = result.dropna(
+            how="all"
+        )
+
+    # Extra spaces
+    if any(x in cmd for x in [
+        "space",
+        "spaces",
+        "trim",
+        "स्पेस",
+        "खाली जगह"
+    ]):
+        result = clean_spaces(result)
+
+    # Column names
+    if any(x in cmd for x in [
+        "column",
+        "columns",
+        "column name",
+        "column names",
+        "कॉलम"
+    ]):
+        new_cols = []
+
+        for col in result.columns:
+            col = str(col).strip()
+            col = re.sub(r"\s+", "_", col)
+            new_cols.append(col)
+
+        result.columns = unique_columns(
+            new_cols
+        )
+
+    # A-Z
+    if any(x in cmd for x in [
+        "a-z",
+        "a to z",
+        "a se z",
+        "ascending",
+        "ए से जेड"
+    ]):
+        if len(result.columns) > 0:
+            result = result.sort_values(
+                by=result.columns[0],
+                ascending=True
+            )
+
+    # Z-A
+    if any(x in cmd for x in [
+        "z-a",
+        "z to a",
+        "z se a",
+        "descending",
+        "जेड से ए"
+    ]):
+        if len(result.columns) > 0:
+            result = result.sort_values(
+                by=result.columns[0],
+                ascending=False
+            )
+
+    result.columns = unique_columns(
+        result.columns
+    )
+
+    return result.reset_index(drop=True)
+
+
+def make_excel(df):
+    output = io.BytesIO()
+
+    with pd.ExcelWriter(
+        output,
+        engine="openpyxl"
+    ) as writer:
+        df.to_excel(
+            writer,
+            index=False,
+            sheet_name="Clean Data"
+        )
+
+    output.seek(0)
+    return output
+
+
+uploaded = st.file_uploader(
+    "📄 PDF upload karo",
+    type=["pdf"]
+)
+
+if uploaded:
+
+    if st.button("🔍 PDF ka Data Read Karo"):
+
+        try:
+            df = extract_pdf(uploaded)
+
+            if df is None:
+                st.error(
+                    "PDF me table data nahi mila."
+                )
+            else:
+                st.session_state["df"] = df
+                st.success(
+                    "PDF data successfully read ho gaya ✅"
+                )
+
+        except Exception as e:
+            st.error(
+                f"PDF error: {e}"
+            )
+
+
+if "df" in st.session_state:
+
+    st.subheader("📋 Original Data")
+
+    st.dataframe(
+        st.session_state["df"],
+        use_container_width=True
+    )
+
+    command = st.text_input(
+        "🤖 Command do",
+        placeholder=(
+            "duplicate hatao"
+        )
+    )
+
+    if st.button("⚡ Clean Data"):
+
+        if not command.strip():
+            st.warning(
+                "Pehle command likho."
+            )
+        else:
+            try:
+                cleaned = process_command(
+                    st.session_state["df"],
+                    command
+                )
+
+                st.session_state[
+                    "cleaned"
+                ] = cleaned
+
+                st.success(
+                    "Data clean ho gaya ✅"
+                )
+
+            except Exception as e:
+                st.error(
+                    f"Processing error: {e}"
+                )
+
+
+if "cleaned" in st.session_state:
+
+    st.subheader("✨ Cleaned Data")
+
+    st.dataframe(
+        st.session_state["cleaned"],
+        use_container_width=True
+    )
+
+    excel = make_excel(
+        st.session_state["cleaned"]
+    )
+
+    st.download_button(
+        "📥 Excel Download Karo",
+        data=excel,
+        file_name="cleaned_data.xlsx",
+        mime=(
+            "application/vnd.openxmlformats-officedocument."
+            "spreadsheetml.sheet"
+        )
+    )
