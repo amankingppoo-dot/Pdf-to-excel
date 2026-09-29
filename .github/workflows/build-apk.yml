@@ -11,7 +11,6 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -21,23 +20,16 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - - name: Setup Android SDK
-          uses: android-actions/setup-android@v4
-          with:
-       packages: 'platform-tools'
-      - name: Accept Android Licenses
-        run: |
-          yes | sdkmanager --licenses || true
+      - name: Setup Android
+        uses: android-actions/setup-android@v4
 
       - name: Install Android SDK
         run: |
-          sdkmanager "platform-tools"
-          sdkmanager "platforms;android-35"
-          sdkmanager "build-tools;35.0.0"
+          yes | sdkmanager --licenses > /dev/null || true
+          sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
 
-      - name: Create Android Project
+      - name: Create Android project
         run: |
-
           mkdir -p app/src/main/java/com/amankingppoo/pdftoexcel
           mkdir -p app/src/main/res/values
 
@@ -157,9 +149,9 @@ jobs:
           public class MainActivity extends Activity {
 
               private WebView webView;
-              private ValueCallback<Uri[]> filePathCallback;
+              private ValueCallback<Uri[]> fileCallback;
 
-              private static final int FILE_CHOOSER_REQUEST = 1001;
+              private static final int FILE_REQUEST = 1001;
 
               @Override
               protected void onCreate(Bundle savedInstanceState) {
@@ -169,68 +161,50 @@ jobs:
                   setContentView(webView);
 
                   WebSettings settings = webView.getSettings();
-
                   settings.setJavaScriptEnabled(true);
                   settings.setDomStorageEnabled(true);
                   settings.setAllowFileAccess(true);
                   settings.setAllowContentAccess(true);
-                  settings.setDatabaseEnabled(true);
 
-                  CookieManager cookieManager =
-                          CookieManager.getInstance();
+                  CookieManager cookies = CookieManager.getInstance();
+                  cookies.setAcceptCookie(true);
+                  cookies.setAcceptThirdPartyCookies(webView, true);
 
-                  cookieManager.setAcceptCookie(true);
-                  cookieManager.setAcceptThirdPartyCookies(
-                          webView,
-                          true
-                  );
+                  webView.setWebViewClient(new WebViewClient());
 
-                  webView.setWebViewClient(
-                          new WebViewClient()
-                  );
+                  webView.setWebChromeClient(new WebChromeClient() {
+                      @Override
+                      public boolean onShowFileChooser(
+                              WebView view,
+                              ValueCallback<Uri[]> callback,
+                              FileChooserParams params) {
 
-                  webView.setWebChromeClient(
-                          new WebChromeClient() {
-
-                              @Override
-                              public boolean onShowFileChooser(
-                                      WebView webView,
-                                      ValueCallback<Uri[]> callback,
-                                      FileChooserParams params) {
-
-                                  if (filePathCallback != null) {
-                                      filePathCallback.onReceiveValue(null);
-                                  }
-
-                                  filePathCallback = callback;
-
-                                  Intent intent =
-                                          new Intent(
-                                                  Intent.ACTION_OPEN_DOCUMENT
-                                          );
-
-                                  intent.addCategory(
-                                          Intent.CATEGORY_OPENABLE
-                                  );
-
-                                  intent.setType("application/pdf");
-
-                                  startActivityForResult(
-                                          Intent.createChooser(
-                                                  intent,
-                                                  "PDF Select Karo"
-                                          ),
-                                          FILE_CHOOSER_REQUEST
-                                  );
-
-                                  return true;
-                              }
+                          if (fileCallback != null) {
+                              fileCallback.onReceiveValue(null);
                           }
-                  );
+
+                          fileCallback = callback;
+
+                          Intent intent =
+                                  new Intent(Intent.ACTION_OPEN_DOCUMENT);
+
+                          intent.addCategory(
+                                  Intent.CATEGORY_OPENABLE);
+
+                          intent.setType("application/pdf");
+
+                          startActivityForResult(
+                                  Intent.createChooser(
+                                          intent,
+                                          "PDF Select Karo"),
+                                  FILE_REQUEST);
+
+                          return true;
+                      }
+                  });
 
                   webView.setDownloadListener(
                           new DownloadListener() {
-
                               @Override
                               public void onDownloadStart(
                                       String url,
@@ -241,65 +215,51 @@ jobs:
 
                                   DownloadManager.Request request =
                                           new DownloadManager.Request(
-                                                  Uri.parse(url)
-                                          );
+                                                  Uri.parse(url));
 
-                                  String cookies =
+                                  String cookie =
                                           CookieManager
                                                   .getInstance()
                                                   .getCookie(url);
 
-                                  if (cookies != null) {
+                                  if (cookie != null) {
                                       request.addRequestHeader(
                                               "Cookie",
-                                              cookies
-                                      );
+                                              cookie);
                                   }
 
                                   request.addRequestHeader(
                                           "User-Agent",
-                                          userAgent
-                                  );
-
-                                  request.setMimeType(
-                                          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                                  );
+                                          userAgent);
 
                                   request.setTitle(
-                                          "cleaned_data.xlsx"
-                                  );
+                                          "cleaned_data.xlsx");
 
                                   request.setDescription(
-                                          "PDF to Excel AI"
-                                  );
+                                          "PDF to Excel AI");
 
                                   request.setNotificationVisibility(
                                           DownloadManager
                                                   .Request
-                                                  .VISIBILITY_VISIBLE_NOTIFY_COMPLETED
-                                  );
+                                                  .VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
 
                                   request.setDestinationInExternalPublicDir(
                                           Environment.DIRECTORY_DOWNLOADS,
-                                          "cleaned_data.xlsx"
-                                  );
+                                          "cleaned_data.xlsx");
 
                                   DownloadManager manager =
                                           (DownloadManager)
                                                   getSystemService(
-                                                          Context.DOWNLOAD_SERVICE
-                                                  );
+                                                          Context.DOWNLOAD_SERVICE);
 
                                   if (manager != null) {
                                       manager.enqueue(request);
                                   }
                               }
-                          }
-                  );
+                          });
 
                   webView.loadUrl(
-                          "https://pdf-to-excel-mnf7sly46ynmwtnun7psam.streamlit.app/"
-                  );
+                          "https://pdf-to-excel-mnf7sly46ynmwtnun7psam.streamlit.app/");
               }
 
               @Override
@@ -311,32 +271,29 @@ jobs:
                   super.onActivityResult(
                           requestCode,
                           resultCode,
-                          data
-                  );
+                          data);
 
-                  if (requestCode == FILE_CHOOSER_REQUEST) {
+                  if (requestCode == FILE_REQUEST) {
 
-                      Uri[] results = null;
+                      Uri[] result = null;
 
                       if (resultCode == RESULT_OK && data != null) {
-
                           Uri uri = data.getData();
 
                           if (uri != null) {
-                              results = new Uri[]{uri};
+                              result = new Uri[]{uri};
                           }
                       }
 
-                      if (filePathCallback != null) {
-                          filePathCallback.onReceiveValue(results);
-                          filePathCallback = null;
+                      if (fileCallback != null) {
+                          fileCallback.onReceiveValue(result);
+                          fileCallback = null;
                       }
                   }
               }
 
               @Override
               public void onBackPressed() {
-
                   if (webView.canGoBack()) {
                       webView.goBack();
                   } else {
@@ -352,8 +309,7 @@ jobs:
           gradle-version: '8.7'
 
       - name: Build APK
-        run: |
-          gradle assembleDebug
+        run: gradle assembleDebug
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
