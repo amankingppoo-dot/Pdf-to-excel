@@ -24,9 +24,15 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
+      - name: Accept Android Licenses
+        run: |
+          yes | sdkmanager --licenses || true
+
       - name: Install Android SDK
         run: |
-          sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+          sdkmanager "platform-tools"
+          sdkmanager "platforms;android-35"
+          sdkmanager "build-tools;35.0.0"
 
       - name: Create Android Project
         run: |
@@ -95,12 +101,10 @@ jobs:
           <resources>
               <style name="AppTheme"
                   parent="android:style/Theme.Material.Light.NoActionBar">
-
                   <item name="android:fontFamily">sans</item>
                   <item name="android:colorAccent">#1976D2</item>
-                  <item name="android:navigationBarColor">#000000</item>
                   <item name="android:statusBarColor">#1976D2</item>
-
+                  <item name="android:navigationBarColor">#000000</item>
               </style>
           </resources>
           EOF
@@ -190,14 +194,14 @@ jobs:
                               @Override
                               public boolean onShowFileChooser(
                                       WebView webView,
-                                      ValueCallback<Uri[]> filePath,
+                                      ValueCallback<Uri[]> callback,
                                       FileChooserParams params) {
 
                                   if (filePathCallback != null) {
                                       filePathCallback.onReceiveValue(null);
                                   }
 
-                                  filePathCallback = filePath;
+                                  filePathCallback = callback;
 
                                   Intent intent =
                                           new Intent(
@@ -208,9 +212,7 @@ jobs:
                                           Intent.CATEGORY_OPENABLE
                                   );
 
-                                  intent.setType(
-                                          "application/pdf"
-                                  );
+                                  intent.setType("application/pdf");
 
                                   startActivityForResult(
                                           Intent.createChooser(
@@ -277,8 +279,7 @@ jobs:
                                   );
 
                                   request.setDestinationInExternalPublicDir(
-                                          Environment
-                                                  .DIRECTORY_DOWNLOADS,
+                                          Environment.DIRECTORY_DOWNLOADS,
                                           "cleaned_data.xlsx"
                                   );
 
@@ -326,11 +327,7 @@ jobs:
                       }
 
                       if (filePathCallback != null) {
-
-                          filePathCallback.onReceiveValue(
-                                  results
-                          );
-
+                          filePathCallback.onReceiveValue(results);
                           filePathCallback = null;
                       }
                   }
