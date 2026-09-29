@@ -1,0 +1,364 @@
+name: Build PDF to Excel APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK
+        run: |
+          sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+
+      - name: Create Android Project
+        run: |
+
+          mkdir -p app/src/main/java/com/amankingppoo/pdftoexcel
+          mkdir -p app/src/main/res/values
+
+          cat > settings.gradle <<'EOF'
+          pluginManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+
+          rootProject.name = "PdfToExcel"
+          include(":app")
+          EOF
+
+          cat > build.gradle <<'EOF'
+          plugins {
+              id 'com.android.application' version '8.6.1' apply false
+          }
+          EOF
+
+          cat > gradle.properties <<'EOF'
+          android.useAndroidX=true
+          android.nonTransitiveRClass=true
+          EOF
+
+          cat > app/build.gradle <<'EOF'
+          plugins {
+              id 'com.android.application'
+          }
+
+          android {
+              namespace 'com.amankingppoo.pdftoexcel'
+              compileSdk 35
+
+              defaultConfig {
+                  applicationId 'com.amankingppoo.pdftoexcel'
+                  minSdk 23
+                  targetSdk 35
+                  versionCode 1
+                  versionName '1.0'
+              }
+          }
+          EOF
+
+          cat > app/src/main/res/values/strings.xml <<'EOF'
+          <resources>
+              <string name="app_name">PDF to Excel AI</string>
+          </resources>
+          EOF
+
+          cat > app/src/main/res/values/styles.xml <<'EOF'
+          <resources>
+              <style name="AppTheme"
+                  parent="android:style/Theme.Material.Light.NoActionBar">
+
+                  <item name="android:fontFamily">sans</item>
+                  <item name="android:colorAccent">#1976D2</item>
+                  <item name="android:navigationBarColor">#000000</item>
+                  <item name="android:statusBarColor">#1976D2</item>
+
+              </style>
+          </resources>
+          EOF
+
+          cat > app/src/main/AndroidManifest.xml <<'EOF'
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+              <uses-permission android:name="android.permission.INTERNET" />
+
+              <application
+                  android:theme="@style/AppTheme"
+                  android:label="@string/app_name"
+                  android:usesCleartextTraffic="true">
+
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true">
+
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+
+                  </activity>
+
+              </application>
+
+          </manifest>
+          EOF
+
+          cat > app/src/main/java/com/amankingppoo/pdftoexcel/MainActivity.java <<'EOF'
+          package com.amankingppoo.pdftoexcel;
+
+          import android.app.Activity;
+          import android.app.DownloadManager;
+          import android.content.Context;
+          import android.content.Intent;
+          import android.net.Uri;
+          import android.os.Bundle;
+          import android.os.Environment;
+          import android.webkit.CookieManager;
+          import android.webkit.DownloadListener;
+          import android.webkit.ValueCallback;
+          import android.webkit.WebChromeClient;
+          import android.webkit.WebSettings;
+          import android.webkit.WebView;
+          import android.webkit.WebViewClient;
+
+          public class MainActivity extends Activity {
+
+              private WebView webView;
+              private ValueCallback<Uri[]> filePathCallback;
+
+              private static final int FILE_CHOOSER_REQUEST = 1001;
+
+              @Override
+              protected void onCreate(Bundle savedInstanceState) {
+                  super.onCreate(savedInstanceState);
+
+                  webView = new WebView(this);
+                  setContentView(webView);
+
+                  WebSettings settings = webView.getSettings();
+
+                  settings.setJavaScriptEnabled(true);
+                  settings.setDomStorageEnabled(true);
+                  settings.setAllowFileAccess(true);
+                  settings.setAllowContentAccess(true);
+                  settings.setDatabaseEnabled(true);
+
+                  CookieManager cookieManager =
+                          CookieManager.getInstance();
+
+                  cookieManager.setAcceptCookie(true);
+                  cookieManager.setAcceptThirdPartyCookies(
+                          webView,
+                          true
+                  );
+
+                  webView.setWebViewClient(
+                          new WebViewClient()
+                  );
+
+                  webView.setWebChromeClient(
+                          new WebChromeClient() {
+
+                              @Override
+                              public boolean onShowFileChooser(
+                                      WebView webView,
+                                      ValueCallback<Uri[]> filePath,
+                                      FileChooserParams params) {
+
+                                  if (filePathCallback != null) {
+                                      filePathCallback.onReceiveValue(null);
+                                  }
+
+                                  filePathCallback = filePath;
+
+                                  Intent intent =
+                                          new Intent(
+                                                  Intent.ACTION_OPEN_DOCUMENT
+                                          );
+
+                                  intent.addCategory(
+                                          Intent.CATEGORY_OPENABLE
+                                  );
+
+                                  intent.setType(
+                                          "application/pdf"
+                                  );
+
+                                  startActivityForResult(
+                                          Intent.createChooser(
+                                                  intent,
+                                                  "PDF Select Karo"
+                                          ),
+                                          FILE_CHOOSER_REQUEST
+                                  );
+
+                                  return true;
+                              }
+                          }
+                  );
+
+                  webView.setDownloadListener(
+                          new DownloadListener() {
+
+                              @Override
+                              public void onDownloadStart(
+                                      String url,
+                                      String userAgent,
+                                      String contentDisposition,
+                                      String mimeType,
+                                      long contentLength) {
+
+                                  DownloadManager.Request request =
+                                          new DownloadManager.Request(
+                                                  Uri.parse(url)
+                                          );
+
+                                  String cookies =
+                                          CookieManager
+                                                  .getInstance()
+                                                  .getCookie(url);
+
+                                  if (cookies != null) {
+                                      request.addRequestHeader(
+                                              "Cookie",
+                                              cookies
+                                      );
+                                  }
+
+                                  request.addRequestHeader(
+                                          "User-Agent",
+                                          userAgent
+                                  );
+
+                                  request.setMimeType(
+                                          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                                  );
+
+                                  request.setTitle(
+                                          "cleaned_data.xlsx"
+                                  );
+
+                                  request.setDescription(
+                                          "PDF to Excel AI"
+                                  );
+
+                                  request.setNotificationVisibility(
+                                          DownloadManager
+                                                  .Request
+                                                  .VISIBILITY_VISIBLE_NOTIFY_COMPLETED
+                                  );
+
+                                  request.setDestinationInExternalPublicDir(
+                                          Environment
+                                                  .DIRECTORY_DOWNLOADS,
+                                          "cleaned_data.xlsx"
+                                  );
+
+                                  DownloadManager manager =
+                                          (DownloadManager)
+                                                  getSystemService(
+                                                          Context.DOWNLOAD_SERVICE
+                                                  );
+
+                                  if (manager != null) {
+                                      manager.enqueue(request);
+                                  }
+                              }
+                          }
+                  );
+
+                  webView.loadUrl(
+                          "https://pdf-to-excel-mnf7sly46ynmwtnun7psam.streamlit.app/"
+                  );
+              }
+
+              @Override
+              protected void onActivityResult(
+                      int requestCode,
+                      int resultCode,
+                      Intent data) {
+
+                  super.onActivityResult(
+                          requestCode,
+                          resultCode,
+                          data
+                  );
+
+                  if (requestCode == FILE_CHOOSER_REQUEST) {
+
+                      Uri[] results = null;
+
+                      if (resultCode == RESULT_OK && data != null) {
+
+                          Uri uri = data.getData();
+
+                          if (uri != null) {
+                              results = new Uri[]{uri};
+                          }
+                      }
+
+                      if (filePathCallback != null) {
+
+                          filePathCallback.onReceiveValue(
+                                  results
+                          );
+
+                          filePathCallback = null;
+                      }
+                  }
+              }
+
+              @Override
+              public void onBackPressed() {
+
+                  if (webView.canGoBack()) {
+                      webView.goBack();
+                  } else {
+                      super.onBackPressed();
+                  }
+              }
+          }
+          EOF
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.7'
+
+      - name: Build APK
+        run: |
+          gradle assembleDebug
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: PDF-to-Excel-APK
+          path: app/build/outputs/apk/debug/app-debug.apk
