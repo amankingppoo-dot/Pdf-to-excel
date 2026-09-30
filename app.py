@@ -5,6 +5,10 @@ import re
 import io
 from datetime import datetime
 
+# =========================================================
+# PAGE
+# =========================================================
+
 st.set_page_config(
     page_title="PDF → Excel AI",
     page_icon="📄",
@@ -12,7 +16,10 @@ st.set_page_config(
 )
 
 st.title("📄 PDF → Excel AI")
-st.caption("PDF upload karo → natural language command do → Excel ready.")
+st.caption(
+    "PDF upload karo → natural language command do → "
+    "cleaned Excel download karo."
+)
 
 
 # =========================================================
@@ -27,48 +34,34 @@ def norm(x):
 
 ALIASES = {
     "amount": [
-        "amount", "amt", "राशि", "रकम",
-        "कीमत", "मूल्य", "price",
-        "total", "total amount", "payment"
+        "amount", "amt", "राशि", "रकम", "कीमत", "मूल्य",
+        "price", "total", "total amount", "payment"
     ],
-
     "name": [
-        "name", "naam", "नाम",
-        "customer", "customer name"
+        "name", "naam", "नाम", "customer", "customer name"
     ],
-
     "city": [
-        "city", "शहर",
-        "स्थान", "location"
+        "city", "शहर", "स्थान", "location"
     ],
-
     "status": [
         "status", "स्थिति"
     ],
-
     "date": [
-        "date", "दिनांक",
-        "तारीख", "दिन"
+        "date", "दिनांक", "तारीख", "दिन"
     ],
-
     "phone": [
-        "phone", "mobile",
-        "मोबाइल", "फोन", "contact"
+        "phone", "mobile", "मोबाइल", "फोन", "contact"
     ],
-
     "email": [
         "email", "mail", "ईमेल"
     ],
-
     "id": [
-        "id", "code",
-        "क्रमांक", "number", "no"
+        "id", "code", "क्रमांक", "number", "no"
     ],
 }
 
 
 def find_col(df, command, preferred=None):
-
     cmd = norm(command)
 
     if preferred:
@@ -76,20 +69,16 @@ def find_col(df, command, preferred=None):
             if norm(c) == norm(preferred):
                 return c
 
-    # Exact column name
+    # Exact column mentioned in command
     for c in df.columns:
         nc = norm(c)
-
         if nc and nc in cmd:
             return c
 
     # Alias groups
     for group, aliases in ALIASES.items():
-
         if any(a in cmd for a in aliases):
-
             for c in df.columns:
-
                 nc = norm(c)
 
                 if any(
@@ -102,7 +91,6 @@ def find_col(df, command, preferred=None):
 
 
 def numeric_values(s):
-
     x = (
         s.astype(str)
         .str.replace(",", "", regex=False)
@@ -123,25 +111,45 @@ def numeric_values(s):
     )
 
 
+# =========================================================
+# EXCEL CREATION
+# =========================================================
+
 def make_excel(df, summary=None):
 
     out = io.BytesIO()
 
+    if df is None:
+        df = pd.DataFrame()
+
+    # Empty dataframe ke case me bhi valid Excel sheet banegi
+    if len(df.columns) == 0:
+        df = pd.DataFrame({
+            "Message": [
+                "No data columns available"
+            ]
+        })
+
+    # IMPORTANT:
+    # df.to_excel(out) nahi,
+    # df.to_excel(writer) use karna hai.
     with pd.ExcelWriter(
         out,
         engine="openpyxl"
-    ):
+    ) as writer:
 
         df.to_excel(
-            out,
+            writer,
             index=False,
             sheet_name="Clean Data"
         )
 
-        if summary is not None and len(summary):
-
+        if (
+            summary is not None
+            and not summary.empty
+        ):
             summary.to_excel(
-                out,
+                writer,
                 index=False,
                 sheet_name="Summary"
             )
@@ -166,14 +174,19 @@ def extract_pdf_data(pdf_file):
             1
         ):
 
-            tables = page.extract_tables()
+            tables = (
+                page.extract_tables()
+                or []
+            )
 
             for table in tables:
 
                 if table and len(table) > 1:
-
                     tables_all.append(
-                        (page_no, table)
+                        (
+                            page_no,
+                            table
+                        )
                     )
 
     if not tables_all:
@@ -181,9 +194,12 @@ def extract_pdf_data(pdf_file):
 
     first_table = tables_all[0][1]
 
-    header = first_table[0]
+    header = first_table[0] or []
 
     ncols = len(header)
+
+    if ncols == 0:
+        return None
 
     rows = []
 
@@ -192,60 +208,84 @@ def extract_pdf_data(pdf_file):
         if not table:
             continue
 
-        local_header = table[0]
+        local_header = (
+            table[0]
+            or []
+        )
 
         local_rows = table[1:]
 
         if len(local_header) != ncols:
             continue
 
-        rows.extend(local_rows)
+        for row in local_rows:
+
+            if row is None:
+                continue
+
+            row = [
+                "" if v is None
+                else str(v).strip()
+                for v in row
+            ]
+
+            row = (
+                row
+                + [""] * ncols
+            )[:ncols]
+
+            if any(
+                str(v).strip()
+                for v in row
+            ):
+                rows.append(row)
 
     header = [
-
-        str(v).strip()
-
-        if v is not None
-        and str(v).strip()
-
-        else f"Column_{i+1}"
-
+        (
+            str(v).strip()
+            if v is not None
+            and str(v).strip()
+            else f"Column_{i + 1}"
+        )
         for i, v in enumerate(header)
     ]
 
-    clean = []
-
-    for row in rows:
-
-        if row is None:
-            continue
-
-        row = [
-            ""
-            if v is None
-            else str(v).strip()
-            for v in row
-        ]
-
-        row = (
-            row
-            + [""] * ncols
-        )[:ncols]
-
-        if any(
-            str(v).strip()
-            for v in row
-        ):
-
-            clean.append(row)
-
-    if not clean:
+    if not rows:
         return None
 
-    return pd.DataFrame(
-        clean,
+    df = pd.DataFrame(
+        rows,
         columns=header
     )
+
+    # Duplicate column names unique banana
+    seen = {}
+
+    new_columns = []
+
+    for c in df.columns:
+
+        base = (
+            str(c).strip()
+            or "Column"
+        )
+
+        if base not in seen:
+
+            seen[base] = 0
+            new_columns.append(base)
+
+        else:
+
+            seen[base] += 1
+
+            new_columns.append(
+                f"{base}_{seen[base]}"
+            )
+
+    df.columns = new_columns
+
+    return df
 
 
 # =========================================================
@@ -253,7 +293,6 @@ def extract_pdf_data(pdf_file):
 # =========================================================
 
 def has_any(cmd, words):
-
     return any(
         w in cmd
         for w in words
@@ -267,52 +306,36 @@ def has_any(cmd, words):
 def command_sort(df, cmd):
 
     asc_words = [
-
         "low to high",
         "low se high",
-
         "kam se zyada",
         "kam se adhik",
-
         "कम से ज्यादा",
         "कम से अधिक",
-
         "small to big",
         "smallest first",
-
         "lowest first",
-
         "ascending",
-
         "a-z",
         "a to z",
         "a se z",
-
         "ए से जेड"
     ]
 
     desc_words = [
-
         "high to low",
         "high se low",
-
         "zyada se kam",
         "jyada se kam",
-
         "बड़े से छोटे",
         "बड़ा से छोटा",
-
         "large to small",
         "largest first",
-
         "highest first",
-
         "descending",
-
         "z-a",
         "z to a",
         "z se a",
-
         "जेड से ए"
     ]
 
@@ -328,10 +351,8 @@ def command_sort(df, cmd):
 
     if (
         "low niche" in cmd
-        and
-        "high upar" in cmd
+        and "high upar" in cmd
     ):
-
         desc = True
         asc = False
 
@@ -363,7 +384,7 @@ def command_sort(df, cmd):
                 col = c
                 break
 
-    # Default common columns
+    # Common column fallback
     if col is None:
 
         for group in [
@@ -389,7 +410,6 @@ def command_sort(df, cmd):
         col is None
         and len(df.columns)
     ):
-
         col = df.columns[0]
 
     if col is None:
@@ -455,15 +475,16 @@ def parse_filter(df, cmd):
 
         (
             r"(?:amount|amt|राशि|रकम|price|कीमत)"
-            r".{0,20}"
-            r"(?:above|over|greater than|more than|से ज्यादा|से अधिक)"
+            r".{0,30}"
+            r"(?:above|over|greater than|more than|"
+            r"से ज्यादा|से अधिक)"
             r"\s*([0-9][0-9,]*)",
             ">"
         ),
 
         (
             r"(?:amount|amt|राशि|रकम|price|कीमत)"
-            r".{0,20}"
+            r".{0,30}"
             r"(?:below|under|less than|से कम)"
             r"\s*([0-9][0-9,]*)",
             "<"
@@ -471,9 +492,9 @@ def parse_filter(df, cmd):
 
         (
             r"(?:amount|amt|राशि|रकम|price|कीमत)"
-            r"\s*[><]"
-            r"\s*([0-9][0-9,]*)",
-            None
+            r"\s*([><])\s*"
+            r"([0-9][0-9,]*)",
+            "symbol"
         )
     ]
 
@@ -484,111 +505,216 @@ def parse_filter(df, cmd):
             cmd
         )
 
-        if m:
+        if not m:
+            continue
 
-            col = find_col(
-                df,
-                cmd
+        col = find_col(
+            df,
+            cmd
+        )
+
+        if col is None:
+
+            for c in df.columns:
+
+                if any(
+                    a in norm(c)
+                    for a in ALIASES["amount"]
+                ):
+
+                    col = c
+                    break
+
+        if col is None:
+            continue
+
+        number_group = (
+            2
+            if op == "symbol"
+            else 1
+        )
+
+        val = float(
+            m.group(
+                number_group
+            ).replace(",", "")
+        )
+
+        nums = numeric_values(
+            df[col]
+        )
+
+        if op == ">":
+            return (
+                df[nums > val],
+                True
             )
 
-            if col is None:
+        if op == "<":
+            return (
+                df[nums < val],
+                True
+            )
 
-                for c in df.columns:
+        symbol = m.group(1)
 
-                    if any(
-                        a in norm(c)
-                        for a in ALIASES["amount"]
-                    ):
+        if symbol == ">":
+            return (
+                df[nums > val],
+                True
+            )
 
-                        col = c
-                        break
-
-            if col:
-
-                val = float(
-                    m.group(1)
-                    .replace(",", "")
-                )
-
-                nums = numeric_values(
-                    df[col]
-                )
-
-                if op == ">":
-
-                    return (
-                        df[nums > val],
-                        True
-                    )
-
-                if op == "<":
-
-                    return (
-                        df[nums < val],
-                        True
-                    )
-
-                symbol = (
-                    ">"
-                    if ">" in m.group(0)
-                    else "<"
-                )
-
-                if symbol == ">":
-
-                    return (
-                        df[nums > val],
-                        True
-                    )
-
-                return (
-                    df[nums < val],
-                    True
-                )
+        return (
+            df[nums < val],
+            True
+        )
 
     # City / Status / Name
-    for group in [
-        "city",
-        "status",
-        "name"
-    ]:
+    filter_phrases = [
+
+        (
+            "city",
+            [
+                r"(?:city|शहर|स्थान|location)"
+                r"\s*(?:is|=|:|me|में)?"
+                r"\s*([^\n,]+)"
+            ]
+        ),
+
+        (
+            "status",
+            [
+                r"(?:status|स्थिति)"
+                r"\s*(?:is|=|:|me|में)?"
+                r"\s*([^\n,]+)"
+            ]
+        ),
+
+        (
+            "name",
+            [
+                r"(?:name|naam|नाम|customer)"
+                r"\s*(?:is|=|:|me|में)?"
+                r"\s*([^\n,]+)"
+            ]
+        )
+    ]
+
+    for group, patterns2 in filter_phrases:
 
         aliases = ALIASES[group]
 
-        for alias in aliases:
+        for pat in patterns2:
 
             m = re.search(
-
-                re.escape(alias)
-                + r"\s*"
-                + r"(?:is|=|:|me|में)?"
-                + r"\s*"
-                + r"([A-Za-z][A-Za-z0-9 _-]*)",
-
+                pat,
                 cmd
             )
 
-            if m:
+            if not m:
+                continue
 
-                value = m.group(1).strip()
+            value = (
+                m.group(1)
+                .strip()
+            )
 
-                value = re.split(
-                    r"\s+(?:and|aur|or|ya)\s+",
-                    value
-                )[0].strip()
+            value = re.split(
+                r"\s+(?:and|aur|or|ya|ka|ki|ke|"
+                r"data|wale|wali|rakho|dikhao)\b",
+                value
+            )[0].strip()
+
+            value = value.strip(
+                " :-=,."
+            )
+
+            if not value:
+                continue
+
+            for c in df.columns:
+
+                if any(
+                    a in norm(c)
+                    for a in aliases
+                ):
+
+                    series = (
+                        df[c]
+                        .astype(str)
+                        .str.strip()
+                    )
+
+                    mask = (
+                        series.str.lower()
+                        == value.lower()
+                    )
+
+                    if not mask.any():
+
+                        mask = (
+                            series
+                            .str.lower()
+                            .str.contains(
+                                re.escape(
+                                    value.lower()
+                                ),
+                                na=False
+                            )
+                        )
+
+                    if mask.any():
+
+                        return (
+                            df[mask],
+                            True
+                        )
+
+    # Simple city command
+    for city_alias in ALIASES["city"]:
+
+        pattern = (
+            re.escape(city_alias)
+            + r"\s+"
+            r"([A-Za-z\u0900-\u097F]"
+            r"[A-Za-z\u0900-\u097F0-9 _-]*)"
+        )
+
+        m = re.search(
+            pattern,
+            cmd
+        )
+
+        if m:
+
+            value = (
+                m.group(1)
+                .strip()
+            )
+
+            value = re.split(
+                r"\s+(?:ka|ki|ke|data|wale|"
+                r"wali|rakho|dikhao|only|sirf)\b",
+                value
+            )[0].strip()
+
+            if value:
 
                 for c in df.columns:
 
                     if any(
                         a in norm(c)
-                        for a in aliases
+                        for a in ALIASES["city"]
                     ):
 
-                        mask = (
+                        series = (
                             df[c]
                             .astype(str)
                             .str.strip()
-                            .str.lower()
+                        )
+
+                        mask = (
+                            series.str.lower()
                             == value.lower()
                         )
 
@@ -608,21 +734,10 @@ def parse_filter(df, cmd):
 
 def summary_dataframe(df):
 
-    rows = []
-
-    rows.append(
-        [
-            "Rows",
-            len(df)
-        ]
-    )
-
-    rows.append(
-        [
-            "Columns",
-            len(df.columns)
-        ]
-    )
+    rows = [
+        ["Rows", len(df)],
+        ["Columns", len(df.columns)]
+    ]
 
     for c in df.columns:
 
@@ -638,23 +753,19 @@ def summary_dataframe(df):
             )
         ):
 
-            rows.append(
-                [
-                    f"Total {c}",
-                    float(nums.sum())
-                ]
-            )
+            rows.append([
+                f"Total {c}",
+                float(nums.sum())
+            ])
 
-            rows.append(
-                [
-                    f"Average {c}",
-                    (
-                        float(nums.mean())
-                        if nums.notna().any()
-                        else 0
-                    )
-                ]
-            )
+            rows.append([
+                f"Average {c}",
+                (
+                    float(nums.mean())
+                    if nums.notna().any()
+                    else 0
+                )
+            ])
 
     return pd.DataFrame(
         rows,
@@ -682,9 +793,9 @@ def process_command(
 
     actions = []
 
-    # ---------------------------------
+    # -----------------------------------------------------
     # Blank rows
-    # ---------------------------------
+    # -----------------------------------------------------
 
     if has_any(
         cmd,
@@ -720,9 +831,9 @@ def process_command(
             "blank rows removed"
         )
 
-    # ---------------------------------
-    # Duplicate
-    # ---------------------------------
+    # -----------------------------------------------------
+    # Duplicate rows
+    # -----------------------------------------------------
 
     if has_any(
         cmd,
@@ -742,12 +853,13 @@ def process_command(
         result = result.drop_duplicates()
 
         actions.append(
-            f"{before-len(result)} duplicate rows removed"
+            f"{before - len(result)} "
+            "duplicate rows removed"
         )
 
-    # ---------------------------------
+    # -----------------------------------------------------
     # Extra spaces
-    # ---------------------------------
+    # -----------------------------------------------------
 
     if has_any(
         cmd,
@@ -781,9 +893,9 @@ def process_command(
             "extra spaces cleaned"
         )
 
-    # ---------------------------------
+    # -----------------------------------------------------
     # Missing values
-    # ---------------------------------
+    # -----------------------------------------------------
 
     if has_any(
         cmd,
@@ -799,7 +911,6 @@ def process_command(
     ):
 
         result = result.replace(
-
             [
                 "",
                 "nan",
@@ -812,7 +923,6 @@ def process_command(
                 "N/A",
                 "n/a"
             ],
-
             pd.NA
         )
 
@@ -820,9 +930,9 @@ def process_command(
             "missing values normalized"
         )
 
-    # ---------------------------------
-    # Missing rows remove
-    # ---------------------------------
+    # -----------------------------------------------------
+    # Remove rows with missing values
+    # -----------------------------------------------------
 
     if has_any(
         cmd,
@@ -839,12 +949,13 @@ def process_command(
         )
 
         actions.append(
-            "rows containing missing values removed"
+            "rows containing missing "
+            "values removed"
         )
 
-    # ---------------------------------
+    # -----------------------------------------------------
     # Clean column names
-    # ---------------------------------
+    # -----------------------------------------------------
 
     if has_any(
         cmd,
@@ -879,15 +990,35 @@ def process_command(
                 or "column"
             )
 
-        result.columns = new
+        # Unique column names
+        used = {}
+
+        unique = []
+
+        for c in new:
+
+            if c not in used:
+
+                used[c] = 0
+                unique.append(c)
+
+            else:
+
+                used[c] += 1
+
+                unique.append(
+                    f"{c}_{used[c]}"
+                )
+
+        result.columns = unique
 
         actions.append(
             "column names cleaned"
         )
 
-    # ---------------------------------
+    # -----------------------------------------------------
     # Number cleanup
-    # ---------------------------------
+    # -----------------------------------------------------
 
     if has_any(
         cmd,
@@ -920,9 +1051,9 @@ def process_command(
             "numeric values cleaned"
         )
 
-    # ---------------------------------
+    # -----------------------------------------------------
     # Filter
-    # ---------------------------------
+    # -----------------------------------------------------
 
     result, filtered = parse_filter(
         result,
@@ -930,14 +1061,13 @@ def process_command(
     )
 
     if filtered:
-
         actions.append(
             "filter applied"
         )
 
-    # ---------------------------------
+    # -----------------------------------------------------
     # Sort
-    # ---------------------------------
+    # -----------------------------------------------------
 
     result, sorted_ok = command_sort(
         result,
@@ -968,9 +1098,9 @@ def process_command(
             f"sorted {direction}"
         )
 
-    # ---------------------------------
+    # -----------------------------------------------------
     # Selected columns
-    # ---------------------------------
+    # -----------------------------------------------------
 
     if has_any(
         cmd,
@@ -986,7 +1116,6 @@ def process_command(
         for c in result.columns:
 
             if norm(c) in cmd:
-
                 requested.append(c)
 
         if requested:
@@ -999,22 +1128,23 @@ def process_command(
                 "selected columns kept"
             )
 
-    # ---------------------------------
+    # -----------------------------------------------------
     # Remove column
-    # ---------------------------------
+    # -----------------------------------------------------
 
     m = re.search(
-
         r"(?:remove|delete|drop|hatao)"
         r"\s+(?:column|col)"
         r"\s+([a-zA-Z0-9_]+)",
-
         cmd
     )
 
     if m:
 
-        target = m.group(1).strip()
+        target = (
+            m.group(1)
+            .strip()
+        )
 
         for c in list(
             result.columns
@@ -1030,9 +1160,9 @@ def process_command(
                     f"column {c} removed"
                 )
 
-    # ---------------------------------
+    # -----------------------------------------------------
     # Serial number
-    # ---------------------------------
+    # -----------------------------------------------------
 
     if has_any(
         cmd,
@@ -1044,6 +1174,12 @@ def process_command(
             "row number"
         ]
     ):
+
+        if "Sr_No" in result.columns:
+
+            result = result.drop(
+                columns=["Sr_No"]
+            )
 
         result.insert(
             0,
@@ -1058,9 +1194,9 @@ def process_command(
             "serial number added"
         )
 
-    # ---------------------------------
+    # -----------------------------------------------------
     # Summary
-    # ---------------------------------
+    # -----------------------------------------------------
 
     summary_requested = has_any(
         cmd,
@@ -1090,20 +1226,22 @@ def process_command(
             "summary generated"
         )
 
-    # ---------------------------------
-    # Final cleanup
-    # ---------------------------------
+    # -----------------------------------------------------
+    # Final text cleanup
+    # -----------------------------------------------------
 
     for c in result.columns:
 
         if result[c].dtype == "object":
 
             result[c] = result[c].map(
-
                 lambda x:
-                x.strip()
-                if isinstance(x, str)
-                else x
+                    x.strip()
+                    if isinstance(
+                        x,
+                        str
+                    )
+                    else x
             )
 
     return (
@@ -1131,14 +1269,13 @@ if "history" not in st.session_state:
 
 
 # =========================================================
-# UPLOAD
+# PDF UPLOAD
 # =========================================================
 
 uploaded = st.file_uploader(
     "📄 PDF upload karo",
     type=["pdf"]
 )
-
 
 if uploaded:
 
@@ -1163,7 +1300,10 @@ if uploaded:
                 if data is None:
 
                     st.error(
-                        "PDF me readable table data nahi mila."
+                        "PDF me readable table "
+                        "data nahi mila. "
+                        "Agar PDF scanned/photo hai "
+                        "to OCR ki zarurat hogi."
                     )
 
                 else:
@@ -1185,9 +1325,9 @@ if uploaded:
                     ] = []
 
                     st.success(
-
                         f"{len(data)} rows aur "
-                        f"{len(data.columns)} columns mile ✅"
+                        f"{len(data.columns)} "
+                        "columns mile ✅"
                     )
 
                     st.rerun()
@@ -1203,11 +1343,16 @@ if uploaded:
 # MAIN UI
 # =========================================================
 
-if st.session_state["df"] is not None:
+if (
+    st.session_state["df"]
+    is not None
+):
 
-    current = st.session_state[
-        "cleaned_df"
-    ]
+    current = (
+        st.session_state[
+            "cleaned_df"
+        ]
+    )
 
     st.subheader(
         "📋 Current Excel Data"
@@ -1224,32 +1369,22 @@ if st.session_state["df"] is not None:
     )
 
     st.caption(
-        "Hindi/English me normal language me command do. "
-        "Ek ke baad doosri command bhi chalegi."
+        "Hindi/English me normal language "
+        "me command do. Ek ke baad doosri "
+        "command bhi chalegi."
     )
 
     examples = [
-
         "duplicate hatao",
-
         "amount low to high karo",
-
         "amount high to low karo",
-
         "blank rows hatao",
-
         "extra spaces hatao",
-
         "name A-Z karo",
-
         "amount 1000 se zyada wale dikhao",
-
         "sirf Raipur ka data rakho",
-
         "summary bana do",
-
         "total amount batao",
-
         "report bana do"
     ]
 
@@ -1260,26 +1395,23 @@ if st.session_state["df"] is not None:
         )
     )
 
-    # ---------------------------------
-    # COMMAND FORM
-    # ---------------------------------
-
     with st.form(
         "command_form",
         clear_on_submit=True
     ):
 
         command = st.text_input(
-
             "Command",
-
-            placeholder=
-            "Jaise: duplicate hatao aur amount low to high karo"
+            placeholder=(
+                "Jaise: duplicate hatao "
+                "aur amount low to high karo"
+            )
         )
 
-        submitted = st.form_submit_button(
-
-            "⚡ Command Apply Karo"
+        submitted = (
+            st.form_submit_button(
+                "⚡ Command Apply Karo"
+            )
         )
 
     if submitted:
@@ -1293,7 +1425,7 @@ if st.session_state["df"] is not None:
         else:
 
             with st.spinner(
-                "AI-style command process ho rahi hai..."
+                "Command process ho rahi hai..."
             ):
 
                 try:
@@ -1303,7 +1435,6 @@ if st.session_state["df"] is not None:
                         summary,
                         actions
                     ) = process_command(
-
                         current,
                         command
                     )
@@ -1318,26 +1449,27 @@ if st.session_state["df"] is not None:
 
                     st.session_state[
                         "history"
-                    ].append(
+                    ].append({
 
-                        {
-                            "time":
-                            datetime.now().strftime(
+                        "time":
+                            datetime.now()
+                            .strftime(
                                 "%H:%M:%S"
                             ),
 
-                            "command":
+                        "command":
                             command,
 
-                            "actions":
+                        "actions":
                             (
-                                ", ".join(actions)
+                                ", ".join(
+                                    actions
+                                )
                                 if actions
                                 else
                                 "No matching operation"
                             )
-                        }
-                    )
+                    })
 
                     st.rerun()
 
@@ -1355,7 +1487,8 @@ if st.session_state["df"] is not None:
 if (
     st.session_state[
         "summary_df"
-    ] is not None
+    ]
+    is not None
 ):
 
     st.subheader(
@@ -1363,11 +1496,9 @@ if (
     )
 
     st.dataframe(
-
         st.session_state[
             "summary_df"
         ],
-
         use_container_width=True
     )
 
@@ -1385,15 +1516,12 @@ if st.session_state[
 ]:
 
     st.dataframe(
-
         pd.DataFrame(
             st.session_state[
                 "history"
             ]
         ),
-
         use_container_width=True,
-
         hide_index=True
     )
 
@@ -1408,37 +1536,52 @@ else:
 # DOWNLOAD + RESET
 # =========================================================
 
-if st.session_state["df"] is not None:
+if (
+    st.session_state["df"]
+    is not None
+):
 
     col1, col2 = st.columns(2)
 
+    # -----------------------------------------------------
+    # DOWNLOAD
+    # -----------------------------------------------------
+
     with col1:
 
-        excel = make_excel(
+        try:
 
-            st.session_state[
-                "cleaned_df"
-            ],
+            excel = make_excel(
+                st.session_state[
+                    "cleaned_df"
+                ],
+                st.session_state[
+                    "summary_df"
+                ]
+            )
 
-            st.session_state[
-                "summary_df"
-            ]
-        )
+            st.download_button(
+                "📥 Final Excel Download Karo",
+                data=excel,
+                file_name=(
+                    "AI_cleaned_excel.xlsx"
+                ),
+                mime=(
+                    "application/vnd.openxmlformats-"
+                    "officedocument.spreadsheetml.sheet"
+                ),
+                use_container_width=True
+            )
 
-        st.download_button(
+        except Exception as e:
 
-            "📥 Final Excel Download Karo",
+            st.error(
+                f"Excel create error: {e}"
+            )
 
-            data=excel,
-
-            file_name=
-            "AI_cleaned_excel.xlsx",
-
-            mime=
-            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-
-            use_container_width=True
-        )
+    # -----------------------------------------------------
+    # RESET
+    # -----------------------------------------------------
 
     with col2:
 
@@ -1449,9 +1592,11 @@ if st.session_state["df"] is not None:
 
             st.session_state[
                 "cleaned_df"
-            ] = st.session_state[
-                "df"
-            ].copy()
+            ] = (
+                st.session_state[
+                    "df"
+                ].copy()
+            )
 
             st.session_state[
                 "summary_df"
@@ -1464,9 +1609,13 @@ if st.session_state["df"] is not None:
             st.rerun()
 
 
+# =========================================================
+# FOOTER
+# =========================================================
+
 st.divider()
 
 st.caption(
-    "Core processing local Python/Pandas based hai; "
-    "paid AI API required nahi hai."
+    "PDF → Excel processing Pandas/Python "
+    "based hai; paid AI API required nahi hai."
 )
