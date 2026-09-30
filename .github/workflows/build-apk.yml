@@ -23,7 +23,7 @@ jobs:
         with:
           packages: 'platform-tools'
 
-      - name: Install Android SDK packages
+      - name: Install Android SDK
         run: |
           sdkmanager "platforms;android-35" "build-tools;35.0.0"
 
@@ -33,6 +33,7 @@ jobs:
           gradle-version: '8.7'
 
       - name: Create Android project
+        shell: bash
         run: |
 
           mkdir -p app/src/main/java/com/pdf2excel/ai
@@ -48,7 +49,6 @@ jobs:
           }
 
           dependencyResolutionManagement {
-              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
               repositories {
                   google()
                   mavenCentral()
@@ -66,7 +66,7 @@ jobs:
           EOF
 
           cat > gradle.properties <<'EOF'
-          android.useAndroidX=true
+          android.useAndroidX=false
           android.nonTransitiveRClass=true
           EOF
 
@@ -87,14 +87,28 @@ jobs:
                   versionName "1.0"
               }
           }
+          EOF
 
-          dependencies {
-              implementation 'androidx.appcompat:appcompat:1.7.0'
-          }
+          cat > app/src/main/res/values/styles.xml <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <resources>
+
+              <style name="AppTheme"
+                  parent="android:style/Theme.Material.Light.NoActionBar">
+
+                  <item name="android:fontFamily">sans</item>
+                  <item name="android:colorAccent">#2196F3</item>
+                  <item name="android:navigationBarColor">#000000</item>
+                  <item name="android:statusBarColor">#000000</item>
+
+              </style>
+
+          </resources>
           EOF
 
           cat > app/src/main/AndroidManifest.xml <<'EOF'
           <?xml version="1.0" encoding="utf-8"?>
+
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
               <uses-permission android:name="android.permission.INTERNET" />
@@ -102,10 +116,12 @@ jobs:
               <application
                   android:allowBackup="true"
                   android:label="PDF to Excel AI"
-                  android:theme="@style/AppTheme">
+                  android:theme="@style/AppTheme"
+                  android:usesCleartextTraffic="true">
 
                   <activity
                       android:name=".MainActivity"
+                      android:screenOrientation="portrait"
                       android:exported="true">
 
                       <intent-filter>
@@ -120,27 +136,15 @@ jobs:
           </manifest>
           EOF
 
-          cat > app/src/main/res/values/styles.xml <<'EOF'
-          <?xml version="1.0" encoding="utf-8"?>
-          <resources>
-
-              <style name="AppTheme"
-                  parent="android:style/Theme.Material.Light.NoActionBar">
-
-                  <item name="android:fontFamily">sans</item>
-                  <item name="android:colorAccent">#2196F3</item>
-                  <item name="android:navigationBarColor">#000000</item>
-
-              </style>
-
-          </resources>
-          EOF
-
           cat > app/src/main/java/com/pdf2excel/ai/MainActivity.java <<'EOF'
           package com.pdf2excel.ai;
 
           import android.app.Activity;
+          import android.content.Intent;
+          import android.net.Uri;
           import android.os.Bundle;
+          import android.webkit.ValueCallback;
+          import android.webkit.WebChromeClient;
           import android.webkit.WebSettings;
           import android.webkit.WebView;
           import android.webkit.WebViewClient;
@@ -148,6 +152,9 @@ jobs:
           public class MainActivity extends Activity {
 
               private WebView webView;
+              private ValueCallback<Uri[]> filePathCallback;
+
+              private static final int FILE_CHOOSER_REQUEST = 1001;
 
               @Override
               protected void onCreate(Bundle savedInstanceState) {
@@ -162,18 +169,100 @@ jobs:
                   settings.setDomStorageEnabled(true);
                   settings.setAllowFileAccess(true);
                   settings.setAllowContentAccess(true);
+                  settings.setDatabaseEnabled(true);
                   settings.setBuiltInZoomControls(false);
                   settings.setDisplayZoomControls(false);
+                  settings.setLoadWithOverviewMode(false);
+                  settings.setUseWideViewPort(true);
 
                   webView.setWebViewClient(new WebViewClient());
 
+                  webView.setWebChromeClient(new WebChromeClient() {
+
+                      @Override
+                      public boolean onShowFileChooser(
+                              WebView webView,
+                              ValueCallback<Uri[]> filePathCallback,
+                              FileChooserParams fileChooserParams) {
+
+                          if (MainActivity.this.filePathCallback != null) {
+                              MainActivity.this.filePathCallback.onReceiveValue(null);
+                          }
+
+                          MainActivity.this.filePathCallback = filePathCallback;
+
+                          Intent intent =
+                                  fileChooserParams.createIntent();
+
+                          try {
+                              startActivityForResult(
+                                      intent,
+                                      FILE_CHOOSER_REQUEST
+                              );
+                          } catch (Exception e) {
+                              MainActivity.this.filePathCallback = null;
+                              return false;
+                          }
+
+                          return true;
+                      }
+                  });
+
                   webView.loadUrl(
-                      "https://pdf-to-excel-mnf7sly46ynmwtnun7psam.streamlit.app/"
+                          "https://pdf-to-excel-mnf7sly46ynmwtnun7psam.streamlit.app/"
                   );
               }
 
               @Override
+              protected void onActivityResult(
+                      int requestCode,
+                      int resultCode,
+                      Intent data) {
+
+                  super.onActivityResult(
+                          requestCode,
+                          resultCode,
+                          data
+                  );
+
+                  if (requestCode == FILE_CHOOSER_REQUEST) {
+
+                      Uri[] results = null;
+
+                      if (resultCode == RESULT_OK && data != null) {
+
+                          if (data.getClipData() != null) {
+
+                              int count =
+                                      data.getClipData().getItemCount();
+
+                              results = new Uri[count];
+
+                              for (int i = 0; i < count; i++) {
+                                  results[i] =
+                                          data.getClipData()
+                                              .getItemAt(i)
+                                              .getUri();
+                              }
+
+                          } else if (data.getData() != null) {
+
+                              results = new Uri[]{
+                                      data.getData()
+                              };
+                          }
+                      }
+
+                      if (filePathCallback != null) {
+                          filePathCallback.onReceiveValue(results);
+                          filePathCallback = null;
+                      }
+                  }
+              }
+
+              @Override
               public void onBackPressed() {
+
                   if (webView.canGoBack()) {
                       webView.goBack();
                   } else {
@@ -185,7 +274,7 @@ jobs:
 
       - name: Build APK
         run: |
-          gradle assembleDebug --no-daemon
+          gradle assembleDebug --no-daemon --stacktrace
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
