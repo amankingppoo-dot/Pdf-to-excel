@@ -8,6 +8,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+
       - name: Checkout repository
         uses: actions/checkout@v4
 
@@ -18,25 +19,22 @@ jobs:
           java-version: '17'
 
       - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
+        with:
+          packages: 'platform-tools'
 
-      - name: Accept Android licenses
+      - name: Install Android SDK packages
         run: |
-          yes | sdkmanager --licenses || true
-
-      - name: Install Android SDK
-        run: |
-          sdkmanager "platform-tools"
-          sdkmanager "platforms;android-35"
-          sdkmanager "build-tools;35.0.0"
+          sdkmanager "platforms;android-35" "build-tools;35.0.0"
 
       - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v4
+        uses: gradle/actions/setup-gradle@v6
         with:
           gradle-version: '8.7'
 
       - name: Create Android project
         run: |
+
           mkdir -p app/src/main/java/com/pdf2excel/ai
           mkdir -p app/src/main/res/values
 
@@ -57,7 +55,7 @@ jobs:
               }
           }
 
-          rootProject.name = "PDFToExcelAI"
+          rootProject.name = "PDFtoExcelAI"
           include(":app")
           EOF
 
@@ -65,6 +63,11 @@ jobs:
           plugins {
               id 'com.android.application' version '8.6.1' apply false
           }
+          EOF
+
+          cat > gradle.properties <<'EOF'
+          android.useAndroidX=true
+          android.nonTransitiveRClass=true
           EOF
 
           cat > app/build.gradle <<'EOF'
@@ -77,26 +80,17 @@ jobs:
               compileSdk 35
 
               defaultConfig {
-                  applicationId 'com.pdf2excel.ai"
+                  applicationId "com.pdf2excel.ai"
                   minSdk 23
                   targetSdk 35
                   versionCode 1
                   versionName "1.0"
               }
           }
-          EOF
 
-          cat > app/src/main/res/values/styles.xml <<'EOF'
-          <?xml version="1.0" encoding="utf-8"?>
-          <resources>
-              <style name="AppTheme"
-                  parent="android:style/Theme.Material.Light.NoActionBar">
-                  <item name="android:fontFamily">sans</item>
-                  <item name="android:colorAccent">#2196F3</item>
-                  <item name="android:statusBarColor">#000000</item>
-                  <item name="android:navigationBarColor">#000000</item>
-              </style>
-          </resources>
+          dependencies {
+              implementation 'androidx.appcompat:appcompat:1.7.0'
+          }
           EOF
 
           cat > app/src/main/AndroidManifest.xml <<'EOF'
@@ -107,14 +101,12 @@ jobs:
 
               <application
                   android:allowBackup="true"
-                  android:label="PDF → Excel AI"
-                  android:theme="@style/AppTheme"
-                  android:usesCleartextTraffic="true">
+                  android:label="PDF to Excel AI"
+                  android:theme="@style/AppTheme">
 
                   <activity
                       android:name=".MainActivity"
-                      android:exported="true"
-                      android:screenOrientation="portrait">
+                      android:exported="true">
 
                       <intent-filter>
                           <action android:name="android.intent.action.MAIN" />
@@ -126,6 +118,22 @@ jobs:
               </application>
 
           </manifest>
+          EOF
+
+          cat > app/src/main/res/values/styles.xml <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <resources>
+
+              <style name="AppTheme"
+                  parent="android:style/Theme.Material.Light.NoActionBar">
+
+                  <item name="android:fontFamily">sans</item>
+                  <item name="android:colorAccent">#2196F3</item>
+                  <item name="android:navigationBarColor">#000000</item>
+
+              </style>
+
+          </resources>
           EOF
 
           cat > app/src/main/java/com/pdf2excel/ai/MainActivity.java <<'EOF'
@@ -152,9 +160,10 @@ jobs:
 
                   settings.setJavaScriptEnabled(true);
                   settings.setDomStorageEnabled(true);
-                  settings.setDatabaseEnabled(true);
                   settings.setAllowFileAccess(true);
                   settings.setAllowContentAccess(true);
+                  settings.setBuiltInZoomControls(false);
+                  settings.setDisplayZoomControls(false);
 
                   webView.setWebViewClient(new WebViewClient());
 
